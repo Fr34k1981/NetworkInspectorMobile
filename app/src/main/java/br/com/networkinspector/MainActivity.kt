@@ -229,6 +229,7 @@ class MainActivity : Activity() {
     }
 
     private fun runTask(label: String, task: () -> Unit) {
+        if (resultCard.childCount > 5) resultCard.removeViewAt(5)
         channelChart.visibility = View.GONE
         timer.base = android.os.SystemClock.elapsedRealtime()
         timer.visibility = View.VISIBLE
@@ -342,6 +343,10 @@ class MainActivity : Activity() {
         resultText.text = message
         currentReport = "Senha do Wi-Fi\n$message"
         status.text = "A senha é protegida pelo Android."
+        timer.stop()
+        timer.visibility = View.GONE
+        progress.visibility = View.GONE
+        channelChart.visibility = View.GONE
         val openSettings = Button(this).apply {
             text = "Abrir configurações de Wi-Fi"
             isAllCaps = false
@@ -352,8 +357,8 @@ class MainActivity : Activity() {
                 catch (_: Exception) { Toast.makeText(this@MainActivity, "Não foi possível abrir as configurações.", Toast.LENGTH_SHORT).show() }
             }
         }
-        if (resultCard.childCount > 2) resultCard.removeViewAt(2)
-        if (resultCard.childCount == 2) resultCard.addView(openSettings, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(14) })
+        if (resultCard.childCount > 5) resultCard.removeViewAt(5)
+        resultCard.addView(openSettings, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(14) })
     }
 
     private fun wifiInfo() {
