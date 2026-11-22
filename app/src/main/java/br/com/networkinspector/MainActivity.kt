@@ -197,6 +197,7 @@ class MainActivity : Activity() {
     }
 
     private fun runTask(label: String, task: () -> Unit) {
+        if (resultCard.childCount > 2) resultCard.removeViewAt(2)
         status.text = "Executando: $label..."
         resultTitle.text = label.uppercase()
         resultText.text = "Aguarde enquanto a análise é realizada..."
