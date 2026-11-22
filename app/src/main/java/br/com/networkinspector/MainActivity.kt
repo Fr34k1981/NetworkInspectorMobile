@@ -51,8 +51,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 40)
+        if (Build.VERSION.SDK_INT >= 23) {
+            val requested = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (Build.VERSION.SDK_INT >= 33) requested.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            val missing = requested.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 40)
         }
 
         val scroll = ScrollView(this).apply { setBackgroundColor(bg) }
