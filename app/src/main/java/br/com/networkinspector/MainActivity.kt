@@ -36,6 +36,8 @@ class MainActivity : Activity() {
     private lateinit var resultText: TextView
     private lateinit var status: TextView
     private var currentReport = "Nenhum teste executado ainda."
+    @Volatile private var collectingFullReport = false
+    private val fullReport = StringBuilder()
     private val bg = Color.rgb(12, 19, 34)
     private val card = Color.rgb(25, 36, 56)
     private val accent = Color.rgb(77, 155, 255)
@@ -203,18 +205,39 @@ class MainActivity : Activity() {
         resultText.text = "Aguarde enquanto a análise é realizada..."
         currentReport = "$label\nAnálise em andamento..."
         executor.execute {
+            collectingFullReport = label == "Diagnóstico completo"
+            synchronized(fullReport) { fullReport.setLength(0) }
             try {
                 task()
+                if (collectingFullReport) {
+                    val combined = synchronized(fullReport) { fullReport.toString() }
+                    showFinalReport(combined.ifBlank { "Nenhum resultado foi produzido pelos testes." })
+                }
             } catch (e: Exception) {
                 showResult("Erro: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                collectingFullReport = false
             }
             runOnUiThread { status.text = "Análise concluída · $label" }
         }
     }
 
     @Synchronized private fun showResult(text: String) {
-        currentReport = text
-        runOnUiThread { resultText.text = text }
+        if (collectingFullReport) {
+            synchronized(fullReport) {
+                if (fullReport.isNotEmpty()) fullReport.append("\n\n")
+                fullReport.append(text)
+            }
+        } else {
+            currentReport = text
+            runOnUiThread { resultText.text = text }
+        }
+    }
+
+    private fun showFinalReport(text: String) {
+        val report = "DIAGNÓSTICO COMPLETO\n\n$text"
+        currentReport = report
+        runOnUiThread { resultText.text = report }
     }
 
     private fun showPasswordHelp() {
