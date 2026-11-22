@@ -19,6 +19,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.Chronometer
+import android.widget.ProgressBar
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -35,6 +37,9 @@ class MainActivity : Activity() {
     private lateinit var resultTitle: TextView
     private lateinit var resultText: TextView
     private lateinit var status: TextView
+    private lateinit var timer: Chronometer
+    private lateinit var progress: ProgressBar
+    private lateinit var channelChart: ChannelChartView
     private var currentReport = "Nenhum teste executado ainda."
     @Volatile private var collectingFullReport = false
     private val fullReport = StringBuilder()
@@ -82,6 +87,16 @@ class MainActivity : Activity() {
         }
         page.addView(status)
 
+        val routerButton = Button(this).apply {
+            text = "Acessar painel do roteador"
+            isAllCaps = false
+            textSize = 14f
+            setTextColor(white)
+            background = rounded(Color.rgb(35, 91, 145), 16)
+            setOnClickListener { openRouterPanel() }
+        }
+        page.addView(routerButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { bottomMargin = dp(18) })
+
         val section = TextView(this).apply {
             text = "FERRAMENTAS DE DIAGNÓSTICO"
             textSize = 11f
@@ -96,6 +111,7 @@ class MainActivity : Activity() {
         addTool(page, "↗", "Ping e estabilidade", "Latência e respostas do servidor") { runTask("Ping e estabilidade") { pingTest() } }
         addTool(page, "⌘", "Teste de DNS", "Verifique a resolução de nomes") { runTask("Teste de DNS") { dnsTest() } }
         addTool(page, "▦", "Dispositivos na rede", "Procure aparelhos que respondem na rede") { runTask("Dispositivos na rede") { scanLan() } }
+        addTool(page, "▥", "Analisar canais Wi-Fi", "Veja redes próximas e canais ocupados") { runTask("Analisar canais Wi-Fi") { scanWifiChannels() } }
         addTool(page, "⇅", "Velocidade de download", "Medição aproximada da conexão") { runTask("Velocidade de download") { speedTest() } }
         addTool(page, "▣", "Senha do Wi-Fi", "Acesse o compartilhamento seguro do Android") { showPasswordHelp() }
         addTool(page, "✦", "Diagnóstico completo", "Execute todas as análises disponíveis") {
@@ -123,6 +139,20 @@ class MainActivity : Activity() {
         }
         resultCard.addView(resultTitle)
         resultCard.addView(resultText)
+        timer = Chronometer(this).apply {
+            textSize = 12f
+            setTextColor(accent)
+            visibility = View.GONE
+            setPadding(0, dp(12), 0, 0)
+        }
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            visibility = View.GONE
+        }
+        channelChart = ChannelChartView(this).apply { visibility = View.GONE }
+        resultCard.addView(timer)
+        resultCard.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)).apply { topMargin = dp(8) })
+        resultCard.addView(channelChart, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190)).apply { topMargin = dp(12) })
         val resultParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         resultParams.topMargin = dp(14)
         page.addView(resultCard, resultParams)
@@ -199,10 +229,14 @@ class MainActivity : Activity() {
     }
 
     private fun runTask(label: String, task: () -> Unit) {
-        if (resultCard.childCount > 2) resultCard.removeViewAt(2)
+        channelChart.visibility = View.GONE
+        timer.base = android.os.SystemClock.elapsedRealtime()
+        timer.visibility = View.VISIBLE
+        timer.start()
+        progress.visibility = View.VISIBLE
         status.text = "Executando: $label..."
         resultTitle.text = label.uppercase()
-        resultText.text = "Aguarde enquanto a análise é realizada..."
+        resultText.text = "Preparando análise..."
         currentReport = "$label\nAnálise em andamento..."
         executor.execute {
             collectingFullReport = label == "Diagnóstico completo"
@@ -218,7 +252,12 @@ class MainActivity : Activity() {
             } finally {
                 collectingFullReport = false
             }
-            runOnUiThread { status.text = "Análise concluída · $label" }
+            runOnUiThread {
+                timer.stop()
+                timer.visibility = View.GONE
+                progress.visibility = View.GONE
+                status.text = "Análise concluída · " + label
+            }
         }
     }
 
@@ -238,6 +277,63 @@ class MainActivity : Activity() {
         val report = "DIAGNÓSTICO COMPLETO\n\n$text"
         currentReport = report
         runOnUiThread { resultText.text = report }
+    }
+
+    private fun openRouterPanel() {
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val gateway = Formatter.formatIpAddress(wm.dhcpInfo.gateway)
+            if (gateway == "0.0.0.0" || gateway.isBlank()) {
+                Toast.makeText(this, "Conecte-se ao Wi-Fi antes de acessar o roteador.", Toast.LENGTH_LONG).show()
+                return
+            }
+            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("http://" + gateway)))
+        } catch (_: Exception) {
+            Toast.makeText(this, "Não foi possível abrir o painel do roteador.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun scanWifiChannels() {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            showResult("Permissão de localização necessária para listar redes próximas. Autorize e tente novamente.")
+            return
+        }
+        if (!wm.isWifiEnabled) {
+            showResult("O Wi-Fi está desligado. Ative-o e tente novamente.")
+            return
+        }
+        try { wm.startScan() } catch (_: Exception) {}
+        val results = try { wm.scanResults } catch (e: Exception) {
+            showResult("Não foi possível obter a varredura: " + e.message)
+            return
+        }
+        if (results.isEmpty()) {
+            showResult("Nenhuma rede retornada. Verifique se a localização está ativada e se a permissão foi concedida. O Android também limita a frequência das varreduras.")
+            return
+        }
+        val channels = results.mapNotNull { item ->
+            val f = item.frequency
+            val ch = when {
+                f in 2412..2472 -> (f - 2407) / 5
+                f == 2484 -> 14
+                f in 5000..5895 -> (f - 5000) / 5
+                f in 5955..7115 -> (f - 5950) / 5
+                else -> null
+            }
+            if (ch == null) null else ch
+        }
+        val counts = channels.groupingBy { it }.eachCount().toSortedMap()
+        val best = counts.minByOrNull { it.value }?.key
+        val details = counts.entries.joinToString("\n") { "Canal " + it.key + ": " + it.value + " rede(s)" }
+        showResult("Redes detectadas: " + results.size + "\nCanais identificados: " + counts.size +
+            "\nCanal com menos redes entre os detectados: " + (best?.toString() ?: "indisponível") +
+            "\n\n" + details +
+            "\n\nA recomendação considera a quantidade de redes detectadas. Interferência, largura de canal e compatibilidade também influenciam. O Android pode limitar as varreduras.")
+        runOnUiThread {
+            channelChart.setData(counts)
+            channelChart.visibility = View.VISIBLE
+        }
     }
 
     private fun showPasswordHelp() {
@@ -332,6 +428,41 @@ class MainActivity : Activity() {
         val seconds = (System.nanoTime() - start) / 1_000_000_000.0
         val mbps = if (seconds > 0) bytes * 8.0 / seconds / 1_000_000.0 else 0.0
         showResult("Dados recebidos: ${"%.2f".format(bytes / 1_000_000.0)} MB\nTempo: ${"%.2f".format(seconds)} s\nDownload aproximado: ${"%.2f".format(mbps)} Mbps\nServidor: Cloudflare")
+    }
+
+    private class ChannelChartView(context: Context) : View(context) {
+        private var values: Map<Int, Int> = emptyMap()
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        private val density = resources.displayMetrics.density
+
+        fun setData(data: Map<Int, Int>) { values = data; invalidate() }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            if (values.isEmpty()) return
+            val left = 34f * density
+            val right = width - 12f * density
+            val top = 12f * density
+            val bottom = height - 28f * density
+            val max = (values.values.maxOrNull() ?: 1).coerceAtLeast(1)
+            paint.color = Color.rgb(166, 183, 207)
+            paint.textSize = 10f * density
+            canvas.drawText("REDES POR CANAL", left, top + 8f * density, paint)
+            val plotTop = top + 22f * density
+            val plotHeight = bottom - plotTop
+            val slot = (right - left) / values.size.coerceAtLeast(1)
+            values.entries.forEachIndexed { index, entry ->
+                val barHeight = plotHeight * entry.value / max.toFloat()
+                val x = left + index * slot + slot * 0.18f
+                val barWidth = slot * 0.62f
+                paint.color = if (entry.value == max) Color.rgb(239, 117, 91) else Color.rgb(77, 155, 255)
+                canvas.drawRoundRect(x, bottom - barHeight, x + barWidth, bottom, 5f * density, 5f * density, paint)
+                paint.color = Color.WHITE
+                canvas.drawText(entry.value.toString(), x, bottom - barHeight - 5f * density, paint)
+                paint.color = Color.rgb(166, 183, 207)
+                canvas.drawText(entry.key.toString(), x, height - 8f * density, paint)
+            }
+        }
     }
 
     private fun rounded(color: Int, radius: Int): GradientDrawable =
